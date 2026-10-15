@@ -4,13 +4,13 @@
   const $ = (id) => document.getElementById(id);
   const ui = {
     dropzone:$("dropzone"), fileInput:$("fileInput"), editor:$("editor"), trackName:$("trackName"), trackMeta:$("trackMeta"),
-    removeFile:$("removeFile"), waveform:$("waveform"), playhead:$("playhead"), durationLabel:$("durationLabel"), totalTime:$("totalTime"),
+    removeFile:$("removeFile"), waveform:$("waveform"), playhead:$("playhead"), durationLabel:$("durationLabel"), totalTime:$("totalTime"),\n    zoomIn:$("zoomIn"), zoomOut:$("zoomOut"), zoomFit:$("zoomFit"), zoomLevel:$("zoomLevel"), timelinePan:$("timelinePan"), visibleStart:$("visibleStart"), visibleEnd:$("visibleEnd"), themeToggle:$("themeToggle"), themeIcon:$("themeIcon"),
     startRange:$("startRange"), endRange:$("endRange"), rangeSelected:$("rangeSelected"), startTime:$("startTime"), endTime:$("endTime"),
     selectedDuration:$("selectedDuration"), resetSelection:$("resetSelection"), playButton:$("playButton"), playIcon:$("playIcon"),
     playLabel:$("playLabel"), playerNote:$("playerNote"), exportButton:$("exportButton"), exportLabel:$("exportLabel"),
     progressWrap:$("progressWrap"), progressBar:$("progressBar"), progressText:$("progressText"), toast:$("toast")
   };
-  let file = null, audioBuffer = null, audioContext = null, source = null, raf = 0, startAt = 0, endAt = 0, playStartedAt = 0, playOffset = 0, toastTimer = 0, peaks = [];
+  let file = null, audioBuffer = null, audioContext = null, source = null, raf = 0, startAt = 0, endAt = 0, playStartedAt = 0, playOffset = 0, toastTimer = 0, peaks = [], zoom = 1, viewStart = 0;\n  const viewDuration = () => audioBuffer ? audioBuffer.duration / zoom : 0;\n  const clampView = () => { if(!audioBuffer){viewStart=0;return} viewStart=Math.max(0,Math.min(audioBuffer.duration-viewDuration(),viewStart)); };\n  function updateZoomUI(){if(!audioBuffer)return;clampView();ui.zoomLevel.textContent=zoom+"×";ui.zoomOut.disabled=zoom<=1;ui.zoomIn.disabled=zoom>=24;ui.timelinePan.disabled=zoom<=1;ui.timelinePan.value=String(Math.round(viewStart/Math.max(.001,audioBuffer.duration-viewDuration())*1000));ui.visibleStart.textContent=fmt(viewStart,false);ui.visibleEnd.textContent=fmt(viewStart+viewDuration(),false);drawWaveform()}
   const fmt = (seconds, hundredths = true) => {
     seconds = Math.max(0, Number.isFinite(seconds) ? seconds : 0);
     const mins = Math.floor(seconds / 60), secs = Math.floor(seconds % 60), cs = Math.floor((seconds % 1) * 100);
@@ -33,11 +33,11 @@
     canvas.width = Math.round(rect.width * dpr); canvas.height = Math.round(rect.height * dpr);
     const ctx = canvas.getContext("2d"); ctx.setTransform(dpr,0,0,dpr,0,0); ctx.clearRect(0,0,rect.width,rect.height);
     const width = rect.width, height = rect.height, mid = height / 2, count = Math.max(1,Math.floor(width / 3.2));
-    const data = audioBuffer.getChannelData(0), samplesPerBar = Math.max(1,Math.floor(data.length/count));
+    const data = audioBuffer.getChannelData(0), viewStartSample=Math.floor(viewStart*audioBuffer.sampleRate), viewSamples=Math.max(1,Math.floor(viewDuration()*audioBuffer.sampleRate)), samplesPerBar=Math.max(1,Math.floor(viewSamples/count));
     const gradient = ctx.createLinearGradient(0,0,0,height); gradient.addColorStop(0,"#8bb6fb"); gradient.addColorStop(.5,"#347ff4"); gradient.addColorStop(1,"#a6c8ff");
     ctx.fillStyle = gradient;
     for(let i=0;i<count;i++){
-      const from=i*samplesPerBar, to=Math.min(data.length,from+samplesPerBar); let peak=0;
+      const from=Math.min(data.length-1,viewStartSample+i*samplesPerBar), to=Math.min(data.length,from+samplesPerBar); let peak=0;
       for(let j=from;j<to;j+=Math.max(1,Math.floor(samplesPerBar/45))) peak=Math.max(peak,Math.abs(data[j]));
       const envelope=.14+peak*.84, barH=Math.max(2,envelope*(height*.82)), x=i*width/count;
       const rounded=Math.min(1.4,(width/count)*.42);
@@ -54,8 +54,8 @@
     if(!audioBuffer)return;
     const duration=audioBuffer.duration;
     if(fromRange){
-      startAt=Number(ui.startRange.value)/1000*duration; endAt=Number(ui.endRange.value)/1000*duration;
-      if(startAt>=endAt){if(fromRange==="start"){startAt=Math.max(0,endAt-.05);ui.startRange.value=Math.round(startAt/duration*1000)}else{endAt=Math.min(duration,startAt+.05);ui.endRange.value=Math.round(endAt/duration*1000)}}
+      startAt=viewStart+Number(ui.startRange.value)/1000*viewDuration(); endAt=viewStart+Number(ui.endRange.value)/1000*viewDuration();
+      if(startAt>=endAt){if(fromRange==="start"){startAt=Math.max(0,endAt-.05);ui.startRange.value=Math.round((startAt-viewStart)/viewDuration()*1000)}else{endAt=Math.min(duration,startAt+.05);ui.endRange.value=Math.round((endAt-viewStart)/viewDuration()*1000)}}
       ui.startTime.value=fmt(startAt);ui.endTime.value=fmt(endAt);
     } else {
       let s=parseTime(ui.startTime.value),e=parseTime(ui.endTime.value);
@@ -75,8 +75,8 @@
   function tickPlayhead() {
     if(!source||!audioContext)return;
     const current=playOffset+(audioContext.currentTime-playStartedAt);
-    if(current>=endAt-startAt){stopPlayback();ui.playhead.style.left=(endAt/audioBuffer.duration*100)+"%";return}
-    ui.playhead.style.left=((startAt+current)/audioBuffer.duration*100)+"%";
+    if(current>=endAt-startAt){stopPlayback();ui.playhead.style.left=((endAt-viewStart)/viewDuration()*100)+"%";return}
+    ui.playhead.style.left=((startAt+current-viewStart)/viewDuration()*100)+"%";
     raf=requestAnimationFrame(tickPlayhead);
   }
   async function playSelection() {
@@ -87,7 +87,7 @@
       if(audioContext.state==="suspended")await audioContext.resume();
       source=audioContext.createBufferSource();source.buffer=audioBuffer;source.connect(audioContext.destination);
       playStartedAt=audioContext.currentTime;playOffset=0;
-      source.onended=()=>{if(source){stopPlayback();ui.playhead.style.left=(endAt/audioBuffer.duration*100)+"%"}};
+      source.onended=()=>{if(source){stopPlayback();ui.playhead.style.left=((endAt-viewStart)/viewDuration()*100)+"%"}};
       source.start(0,startAt,endAt-startAt);
       ui.playIcon.innerHTML='<path d="M7 5h4v14H7zM15 5h4v14h-4z"/>';ui.playLabel.textContent="Stop preview";ui.playerNote.textContent="Memutar bagian pilihan";
       raf=requestAnimationFrame(tickPlayhead);
@@ -149,7 +149,14 @@
   ui.removeFile.addEventListener("click",()=>{stopPlayback();file=null;audioBuffer=null;peaks=[];ui.editor.classList.add("hidden");ui.dropzone.classList.remove("hidden");ui.fileInput.value="";});
   ui.startRange.addEventListener("input",()=>syncTimes("start"));ui.endRange.addEventListener("input",()=>syncTimes("end"));
   [ui.startTime,ui.endTime].forEach(input=>input.addEventListener("change",()=>syncTimes(false)));
-  ui.resetSelection.addEventListener("click",()=>{if(!audioBuffer)return;startAt=0;endAt=audioBuffer.duration;ui.startRange.value=0;ui.endRange.value=1000;ui.startTime.value=fmt(0);ui.endTime.value=fmt(endAt);ui.selectedDuration.textContent=fmt(endAt);updateRangeVisual()});
+  ui.resetSelection.addEventListener("click",()=>{if(!audioBuffer)return;startAt=0;endAt=audioBuffer.duration;zoom=1;viewStart=0;ui.startRange.value=0;ui.endRange.value=1000;ui.startTime.value=fmt(0);ui.endTime.value=fmt(endAt);ui.selectedDuration.textContent=fmt(endAt);updateZoomUI()});
   ui.playButton.addEventListener("click",playSelection);ui.exportButton.addEventListener("click",exportMp3);
+  function setZoom(next){if(!audioBuffer)return;const center=viewStart+viewDuration()/2;zoom=Math.max(1,Math.min(24,next));viewStart=center-viewDuration()/2;clampView();ui.startRange.value=String(Math.max(0,Math.min(1000,Math.round((startAt-viewStart)/viewDuration()*1000))));ui.endRange.value=String(Math.max(0,Math.min(1000,Math.round((endAt-viewStart)/viewDuration()*1000))));updateZoomUI()}
+  ui.zoomIn.addEventListener("click",()=>setZoom(zoom<2?2:zoom<4?4:zoom<8?8:zoom<12?12:zoom<18?18:24));
+  ui.zoomOut.addEventListener("click",()=>setZoom(zoom>18?18:zoom>12?12:zoom>8?8:zoom>4?4:zoom>2?2:1));
+  ui.zoomFit.addEventListener("click",()=>{zoom=1;viewStart=0;ui.startRange.value=String(Math.round(startAt/audioBuffer.duration*1000));ui.endRange.value=String(Math.round(endAt/audioBuffer.duration*1000));updateZoomUI()});
+  ui.timelinePan.addEventListener("input",()=>{if(!audioBuffer)return;viewStart=Number(ui.timelinePan.value)/1000*(audioBuffer.duration-viewDuration());clampView();ui.startRange.value=String(Math.max(0,Math.min(1000,Math.round((startAt-viewStart)/viewDuration()*1000))));ui.endRange.value=String(Math.max(0,Math.min(1000,Math.round((endAt-viewStart)/viewDuration()*1000))));updateZoomUI()});
+  ui.themeToggle.addEventListener("click",()=>{const light=document.body.classList.toggle("light-mode");ui.themeToggle.setAttribute("aria-label",light?"Toggle dark mode":"Toggle light mode");ui.themeIcon.innerHTML=light?'<path d="M20.9 13A8.5 8.5 0 0 1 11 3.1 8.5 8.5 0 1 0 20.9 13Z"/>':'<path d="M12 3v2m0 14v2M3 12h2m14 0h2M5.6 5.6 7 7m10 10 1.4 1.4m0-12.8L17 7M7 17l-1.4 1.4"/><circle cx="12" cy="12" r="4"/>';document.querySelector('meta[name="theme-color"]').content=light?"#f5f5f7":"#090a0e"});
+
   let resizeTimer;window.addEventListener("resize",()=>{clearTimeout(resizeTimer);resizeTimer=setTimeout(drawWaveform,100)});
 })();
