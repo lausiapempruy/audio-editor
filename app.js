@@ -46,9 +46,9 @@
     updateRangeVisual();
   }
   function updateRangeVisual() {
-    const start=Number(ui.startRange.value)/1000*audioBuffer.duration, end=Number(ui.endRange.value)/1000*audioBuffer.duration;
-    ui.rangeSelected.style.left=(start/audioBuffer.duration*100)+"%";
-    ui.rangeSelected.style.width=((end-start)/audioBuffer.duration*100)+"%";
+    if(!audioBuffer)return;const span=viewDuration();
+    const left=Math.max(0,Math.min(100,(startAt-viewStart)/span*100)),right=Math.max(0,Math.min(100,(endAt-viewStart)/span*100));
+    ui.rangeSelected.style.left=left+"%";ui.rangeSelected.style.width=Math.max(0,right-left)+"%";
   }
   function syncTimes(fromRange) {
     if(!audioBuffer)return;
